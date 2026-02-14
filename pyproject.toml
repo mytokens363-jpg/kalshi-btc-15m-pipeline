@@ -1,0 +1,8 @@
+[project]
+name = "kalshi_btc_5min_bot"
+version = "0.1.0"
+description = "Kalshi-first 5-minute BTC up/down bot (collector + replay sim + strategy engine)"
+requires-python = ">=3.11"
+
+[tool.uv]
+# uv can manage deps later; keep empty for now
