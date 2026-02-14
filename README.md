@@ -10,6 +10,7 @@ Goal: Build a high-frequency style strategy for 5-minute BTC up/down markets.
 ## Roadmap (phased)
 
 ### Phase 0 — Infrastructure (no trading)
+- Kalshi demo WebSocket collector (ticker/trade now; orderbook_delta once keys are on VPS)
 - Kalshi connector (auth, market discovery, order book snapshots)
 - Price feed adapter (Binance Futures bookTicker primary; Coinbase ticker fallback)
 - Clock + 5-min candle alignment
