@@ -1,12 +1,21 @@
 from __future__ import annotations
 
-"""Coinbase BTC-USD top-of-book-ish collector.
+"""Binance BTCUSDT top-of-book collector.
 
-Fallback feed for external price reference.
+Priority feed for external price reference.
 
-NOTE:
-- Coinbase 'ticker' is not true top-of-book depth, but includes best bid/ask.
-- For deeper L2, we'd use 'level2' channel (heavier).
+Uses Binance Futures bookTicker stream (very high update rate):
+- wss://fstream.binance.com/ws/btcusdt@bookTicker
+
+Message example:
+{
+  "u": 400900217,
+  "s": "BTCUSDT",
+  "b": "50208.69000000",
+  "B": "0.36900000",
+  "a": "50208.70000000",
+  "A": "0.17800000"
+}
 
 We record EXTERNAL_PRICE events with bid/ask/mid.
 """
@@ -15,7 +24,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 import websockets
 
@@ -27,43 +36,40 @@ def now_ms() -> int:
 
 
 @dataclass
-class CoinbaseConfig:
-    product_id: str = "BTC-USD"
-    url: str = "wss://ws-feed.exchange.coinbase.com"
+class BinanceConfig:
+    symbol: str = "btcusdt"
+    stream: str = "bookTicker"
+    url: str = "wss://fstream.binance.com/ws"
+
+    @property
+    def ws_url(self) -> str:
+        return f"{self.url}/{self.symbol}@{self.stream}"
 
 
-class CoinbaseTickerCollector:
-    def __init__(self, cfg: CoinbaseConfig):
+class BinanceTopOfBookCollector:
+    def __init__(self, cfg: BinanceConfig):
         self.cfg = cfg
 
     async def run(self, emit: Callable[[Event], None]) -> None:
+        url = self.cfg.ws_url
         backoff = 1.0
         while True:
             try:
-                async with websockets.connect(self.cfg.url, ping_interval=20, ping_timeout=20) as ws:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                     backoff = 1.0
-                    sub = {
-                        "type": "subscribe",
-                        "product_ids": [self.cfg.product_id],
-                        "channels": ["ticker"],
-                    }
-                    await ws.send(json.dumps(sub))
-
                     async for msg in ws:
                         try:
                             data = json.loads(msg)
-                            if data.get("type") != "ticker":
-                                continue
-                            bid = float(data.get("best_bid"))
-                            ask = float(data.get("best_ask"))
+                            bid = float(data.get("b"))
+                            ask = float(data.get("a"))
                             if bid <= 0 or ask <= 0:
                                 continue
                             ev = Event(
                                 ts_ms=now_ms(),
                                 type="EXTERNAL_PRICE",
                                 payload={
-                                    "provider": "coinbase",
-                                    "symbol": self.cfg.product_id,
+                                    "provider": "binance",
+                                    "symbol": data.get("s"),
                                     "bid": bid,
                                     "ask": ask,
                                     "mid": (bid + ask) / 2.0,
@@ -73,5 +79,6 @@ class CoinbaseTickerCollector:
                         except Exception:
                             continue
             except Exception:
+                # Reconnect with capped exponential backoff
                 await asyncio.sleep(min(30.0, backoff))
                 backoff = min(30.0, backoff * 1.8)

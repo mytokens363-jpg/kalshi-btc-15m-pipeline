@@ -11,7 +11,7 @@ Goal: Build a high-frequency style strategy for 5-minute BTC up/down markets.
 
 ### Phase 0 — Infrastructure (no trading)
 - Kalshi connector (auth, market discovery, order book snapshots)
-- Price feed adapter (Coinbase/Binance via websocket)
+- Price feed adapter (Binance Futures bookTicker primary; Coinbase ticker fallback)
 - Clock + 5-min candle alignment
 - Local state store + logs
 
@@ -22,6 +22,19 @@ Goal: Build a high-frequency style strategy for 5-minute BTC up/down markets.
 ### Phase 2 — Live small (opt-in)
 - Start tiny size + strict caps
 - Circuit breaker + auto-stop
+
+## Running (Phase 0)
+
+### External price collector (Binance primary, Coinbase fallback)
+
+```bash
+cd ~/.openclaw/workspace/kalshi-btc-5min-bot
+source .venv/bin/activate
+
+python scripts/collect_external_failover.py
+```
+
+Recordings are written to `state/recordings/*.jsonl`.
 
 ## Safety
 - Never store secrets in repo.
