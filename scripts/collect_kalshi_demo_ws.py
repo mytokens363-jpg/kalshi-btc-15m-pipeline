@@ -23,10 +23,12 @@ import json
 import time
 from typing import Any, Dict, List
 
+import os
 import websockets
 
 from kalshi_bot.io.recorder import JsonlRecorder
 from kalshi_bot.types import Event
+from kalshi_bot.kalshi_auth import KalshiKey, ws_auth_headers
 
 
 def now_ms() -> int:
@@ -34,6 +36,7 @@ def now_ms() -> int:
 
 
 WS_URL_DEMO = "wss://demo-api.kalshi.co/trade-api/ws/v2"
+WS_PATH = "/trade-api/ws/v2"
 
 
 def _emit(rec: JsonlRecorder, etype: str, payload: Dict[str, Any]) -> None:
@@ -54,6 +57,7 @@ async def main_async() -> None:
         help="Comma-separated market tickers to filter (optional)",
     )
     ap.add_argument("--ws", default=WS_URL_DEMO, help="WebSocket URL")
+    ap.add_argument("--auth", action="store_true", help="Force authenticated websocket headers")
     args = ap.parse_args()
 
     chans: List[str] = [c.strip() for c in args.channels.split(",") if c.strip()]
@@ -66,10 +70,21 @@ async def main_async() -> None:
     print(f"WS: {args.ws}")
     print(f"channels={chans} markets={markets or 'ALL'}")
 
+    # Auth (demo currently returns 401 even for public channels in our tests; support auth by default if env vars exist)
+    key_id = os.environ.get("KALSHI_ACCESS_KEY")
+    key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH")
+
+    headers = None
+    if args.auth or (key_id and key_path):
+        if not (key_id and key_path):
+            raise SystemExit("Missing KALSHI_ACCESS_KEY or KALSHI_PRIVATE_KEY_PATH env vars")
+        headers = ws_auth_headers(KalshiKey(access_key_id=key_id, private_key_path=key_path), ws_path=WS_PATH)
+        print("Using authenticated websocket headers (KALSHI-ACCESS-KEY/SIGNATURE/TIMESTAMP).")
+
     backoff = 1.0
     while True:
         try:
-            async with websockets.connect(args.ws, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(args.ws, ping_interval=20, ping_timeout=20, additional_headers=headers) as ws:
                 backoff = 1.0
 
                 sub: Dict[str, Any] = {
