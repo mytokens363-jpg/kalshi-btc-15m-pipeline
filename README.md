@@ -39,6 +39,31 @@ python scripts/collect_external_failover.py
 
 Recordings are written to `state/recordings/*.jsonl`.
 
+### Build 15-minute candles (NY time buckets)
+
+```bash
+source .venv/bin/activate
+python scripts/build_15m_candles.py --in state/recordings --out state/candles/btc_15m.jsonl --symbol BTCUSDT
+```
+
+### Streaming 15-minute candles (hybrid: in-memory + write-on-close)
+
+This consumes ticks from stdin and maintains the current NY-aligned 15-minute candle in memory,
+while also writing:
+- append-only candle closes to `--out`
+- a small `--latest` snapshot file updated every tick
+
+```bash
+source .venv/bin/activate
+python scripts/collect_external_failover.py --out /tmp/ext.jsonl
+
+# Example: stream from a file (or pipe from a live collector)
+cat /tmp/ext.jsonl | python scripts/live_15m_candles.py \
+  --out state/candles/btc_15m_live.jsonl \
+  --latest state/candles/btc_15m_latest.json \
+  --symbol BTCUSDT
+```
+
 ## Safety
 - Never store secrets in repo.
 - Use env vars or OS keychain on the node.
