@@ -66,9 +66,10 @@ async def run_kalshi_ws_marketdata(
         headers = ws_auth_headers(key, ws_path=cfg.ws_path)
 
         try:
+            # websockets>=16 uses additional_headers (extra_headers was removed)
             async with websockets.connect(
                 url,
-                extra_headers=headers,
+                additional_headers=headers,
                 ping_interval=cfg.ping_interval_sec,
                 ping_timeout=cfg.ping_interval_sec,
                 close_timeout=5,
