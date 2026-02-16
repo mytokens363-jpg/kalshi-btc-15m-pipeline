@@ -71,6 +71,27 @@ source .venv/bin/activate
 ./scripts/run_live_15m_pipeline.sh
 ```
 
+### Kalshi WS marketdata (read-only)
+
+Kalshi WS v2 requires an authenticated connection even for public marketdata channels.
+Set env vars:
+- `KALSHI_ACCESS_KEY_ID`
+- `KALSHI_PRIVATE_KEY_PATH` (PEM file)
+
+Demo host defaults to `demo-api.kalshi.co`, prod to `api.elections.kalshi.com`.
+
+```bash
+source .venv/bin/activate
+export KALSHI_ACCESS_KEY_ID="..."
+export KALSHI_PRIVATE_KEY_PATH="/path/to/kalshi_private_key.pem"
+
+# Demo, ticker+trade (all markets)
+python scripts/collect_kalshi_ws_marketdata.py --env demo --channels ticker,trade
+
+# Filter to one market ticker (repeatable --market)
+python scripts/collect_kalshi_ws_marketdata.py --env demo --channels ticker,trade --market kxbtc15m-26feb152015
+```
+
 ### Supervisor (health monitor + auto-restart)
 
 This wraps the pipeline, writes logs to `state/logs/`, and restarts if:
