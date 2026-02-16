@@ -71,6 +71,17 @@ source .venv/bin/activate
 ./scripts/run_live_15m_pipeline.sh
 ```
 
+### Supervisor (health monitor + auto-restart)
+
+This wraps the pipeline, writes logs to `state/logs/`, and restarts if:
+- the pipeline exits, or
+- the `btc_15m_latest.json` snapshot stops updating (stale file age)
+
+```bash
+source .venv/bin/activate
+./scripts/run_live_15m_supervisor.sh
+```
+
 Notes:
 - `btc_15m_latest.json` updates every tick.
 - `btc_15m_live.jsonl` appends on candle close (and on clean EOF).
