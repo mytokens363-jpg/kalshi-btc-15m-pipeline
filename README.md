@@ -1,6 +1,6 @@
-# Kalshi BTC 5-minute Bot (Kalshi-first)
+# Kalshi BTC 15-minute Bot (Kalshi-first)
 
-Goal: Build a high-frequency style strategy for 5-minute BTC up/down markets.
+Goal: Build a strategy for Kalshi BTC **15-minute** up/down markets (`kxbtc15m`).
 
 **Principles**
 - Start with **sim/paper** (no live orders) until data + fills + fees are validated.
