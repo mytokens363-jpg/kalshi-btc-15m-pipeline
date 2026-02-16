@@ -16,6 +16,7 @@ import time
 
 import os
 import sys
+import json
 
 # Ensure we can import from ./src when running as a script
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -32,6 +33,7 @@ async def run_with_timeout(coro, seconds: int):
 async def main_async():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None)
+    ap.add_argument("--stdout", action="store_true", help="Also emit JSONL events to stdout (for piping)")
     ap.add_argument("--binanceSeconds", type=int, default=0, help="If >0, run Binance for N seconds then exit (test)")
     ap.add_argument("--coinbaseSeconds", type=int, default=0, help="If >0, run Coinbase for N seconds then exit (test)")
     args = ap.parse_args()
@@ -41,8 +43,13 @@ async def main_async():
 
     def emit(ev):
         rec.append(ev)
+        if args.stdout:
+            # Mirror the recorder format for piping into downstream tools.
+            sys.stdout.write(json.dumps({"ts_ms": ev.ts_ms, "type": ev.type, "payload": ev.payload}, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
 
-    print(f"Recording external feed (binance primary, coinbase fallback) to: {out}")
+    if not args.stdout:
+        print(f"Recording external feed (binance primary, coinbase fallback) to: {out}")
 
     binance = BinanceTopOfBookCollector(BinanceConfig())
     coinbase = CoinbaseTickerCollector(CoinbaseConfig())

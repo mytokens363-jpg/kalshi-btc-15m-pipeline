@@ -64,6 +64,17 @@ cat /tmp/ext.jsonl | python scripts/live_15m_candles.py \
   --symbol BTCUSDT
 ```
 
+### One-command runner (collector → live candles)
+
+```bash
+source .venv/bin/activate
+./scripts/run_live_15m_pipeline.sh
+```
+
+Notes:
+- `btc_15m_latest.json` updates every tick.
+- `btc_15m_live.jsonl` appends on candle close (and on clean EOF).
+
 ## Safety
 - Never store secrets in repo.
 - Use env vars or OS keychain on the node.
