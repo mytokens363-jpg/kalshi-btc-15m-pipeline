@@ -44,7 +44,7 @@ def _subscribe_frame(cfg: KalshiWsConfig) -> dict:
 
 async def run_kalshi_ws_marketdata(
     cfg: KalshiWsConfig,
-    key: KalshiKey,
+    key: Optional[KalshiKey],
     emit: Callable[[dict], None],
     stop_event: Optional[asyncio.Event] = None,
 ) -> None:
@@ -63,7 +63,7 @@ async def run_kalshi_ws_marketdata(
         if stop_event is not None and stop_event.is_set():
             return
 
-        headers = ws_auth_headers(key, ws_path=cfg.ws_path)
+        headers = ws_auth_headers(key, ws_path=cfg.ws_path) if key is not None else None
 
         try:
             # websockets>=16 uses additional_headers (extra_headers was removed)

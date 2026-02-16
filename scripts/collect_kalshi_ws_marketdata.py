@@ -31,10 +31,18 @@ def main() -> int:
     ap.add_argument("--channels", default="ticker,trade", help="Comma-separated channels (e.g., ticker,trade,orderbook_delta)")
     ap.add_argument("--market", action="append", default=[], help="Market ticker (repeatable). If omitted, subscribe to all markets for the channel.")
     ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--public-only",
+        action="store_true",
+        help="Do not authenticate (no headers). Useful for testing public channels like ticker/trade.",
+    )
     args = ap.parse_args()
 
-    access_key_id = _env_required("KALSHI_ACCESS_KEY_ID")
-    private_key_path = _env_required("KALSHI_PRIVATE_KEY_PATH")
+    access_key_id = None
+    private_key_path = None
+    if not args.public_only:
+        access_key_id = _env_required("KALSHI_ACCESS_KEY_ID")
+        private_key_path = _env_required("KALSHI_PRIVATE_KEY_PATH")
 
     if args.env == "demo":
         ws_host = os.getenv("KALSHI_WS_HOST", "demo-api.kalshi.co")
@@ -44,14 +52,22 @@ def main() -> int:
     out = args.out or f"state/recordings/kalshi_ws_{args.env}_{dt.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jsonl"
     rec = JsonlRecorder(out)
 
+    channels = tuple([c.strip() for c in args.channels.split(",") if c.strip()])
+
     cfg = KalshiWsConfig(
         ws_host=ws_host,
-        channels=tuple([c.strip() for c in args.channels.split(",") if c.strip()]),
+        channels=channels,
         market_tickers=tuple(args.market),
     )
-    key = KalshiKey(access_key_id=access_key_id, private_key_path=private_key_path)
 
-    print(f"Connecting to Kalshi WS ({args.env}) wss://{cfg.ws_host}{cfg.ws_path}")
+    # Kalshi docs: these channels require auth
+    private_channels = {"orderbook_delta", "fill", "market_positions", "communications", "order_group_updates"}
+    if args.public_only and any(c in private_channels for c in channels):
+        raise SystemExit(f"--public-only cannot be used with private channels: {sorted(set(channels) & private_channels)}")
+
+    key = None if args.public_only else KalshiKey(access_key_id=access_key_id, private_key_path=private_key_path)
+
+    print(f"Connecting to Kalshi WS ({args.env}) wss://{cfg.ws_host}{cfg.ws_path} auth={'off' if args.public_only else 'on'}")
     print(f"Recording to: {out}")
     if cfg.market_tickers:
         print(f"Markets: {cfg.market_tickers}")
