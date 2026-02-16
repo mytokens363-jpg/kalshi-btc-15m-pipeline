@@ -38,6 +38,25 @@ def sign_pss_sha256_b64(private_key: rsa.RSAPrivateKey, message: str) -> str:
     return base64.b64encode(sig).decode("utf-8")
 
 
+def rest_auth_headers(key: KalshiKey, method: str, path: str) -> Dict[str, str]:
+    """Build Kalshi REST API auth headers.
+
+    Docs: signature = sign( timestamp + METHOD + path_without_query ).
+    Important: when signing, strip query params from `path`.
+    """
+    ts = str(now_ms())
+    method_u = method.upper()
+    path_no_q = path.split("?", 1)[0]
+    msg = ts + method_u + path_no_q
+    pk = load_private_key(key.private_key_path)
+    sig = sign_pss_sha256_b64(pk, msg)
+    return {
+        "KALSHI-ACCESS-KEY": key.access_key_id,
+        "KALSHI-ACCESS-SIGNATURE": sig,
+        "KALSHI-ACCESS-TIMESTAMP": ts,
+    }
+
+
 def ws_auth_headers(key: KalshiKey, ws_path: str = "/trade-api/ws/v2") -> Dict[str, str]:
     """Build Kalshi websocket auth headers.
 
