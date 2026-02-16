@@ -30,7 +30,9 @@ Goal: Build a high-frequency style strategy for 5-minute BTC up/down markets.
 
 ```bash
 cd ~/.openclaw/workspace/kalshi-btc-5min-bot
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
 
 python scripts/collect_external_failover.py
 ```
