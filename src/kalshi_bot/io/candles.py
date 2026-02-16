@@ -24,7 +24,7 @@ class PriceTick:
 
 
 @dataclass
-class Candle5m:
+class Candle15m:
     # candle_start is stored in UTC ms for stability; also emit local ISO for readability.
     candle_start_ms: int
     candle_start_local: str
@@ -41,17 +41,17 @@ class Candle5m:
     last_ts_ms: int
 
 
-def _floor_dt_to_5m(dt_local: datetime) -> datetime:
+def _floor_dt_to_15m(dt_local: datetime) -> datetime:
     # dt_local must be timezone-aware.
-    minute = (dt_local.minute // 5) * 5
+    minute = (dt_local.minute // 15) * 15
     return dt_local.replace(minute=minute, second=0, microsecond=0)
 
 
 def candle_start_ms_utc(ts_ms: int, tz: ZoneInfo = NY_TZ) -> tuple[int, str]:
-    """Return (candle_start_ms_utc, candle_start_local_iso) aligned to 5-min buckets in tz."""
+    """Return (candle_start_ms_utc, candle_start_local_iso) aligned to 15-min buckets in tz."""
     dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=ZoneInfo("UTC"))
     dt_local = dt_utc.astimezone(tz)
-    start_local = _floor_dt_to_5m(dt_local)
+    start_local = _floor_dt_to_15m(dt_local)
     # Convert back to UTC for stable storage.
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     start_ms = int(start_utc.timestamp() * 1000)
@@ -98,12 +98,12 @@ def iter_ticks(paths: Iterable[Path]) -> Iterator[PriceTick]:
                     yield tick
 
 
-def build_5m_candles(
+def build_15m_candles(
     ticks: Iterable[PriceTick],
     tz: ZoneInfo = NY_TZ,
     symbol: str = "BTCUSDT",
-) -> Iterator[Candle5m]:
-    current: Optional[Candle5m] = None
+) -> Iterator[Candle15m]:
+    current: Optional[Candle15m] = None
 
     for t in ticks:
         if t.symbol and t.symbol != symbol:
@@ -114,7 +114,7 @@ def build_5m_candles(
         if current is None or start_ms != current.candle_start_ms:
             if current is not None:
                 yield current
-            current = Candle5m(
+            current = Candle15m(
                 candle_start_ms=start_ms,
                 candle_start_local=start_local_iso,
                 symbol=symbol,
@@ -139,7 +139,7 @@ def build_5m_candles(
         yield current
 
 
-def write_candles_jsonl(out_path: Path, candles: Iterable[Candle5m]) -> dict:
+def write_candles_jsonl(out_path: Path, candles: Iterable[Candle15m]) -> dict:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     first_start: Optional[int] = None
@@ -154,7 +154,7 @@ def write_candles_jsonl(out_path: Path, candles: Iterable[Candle5m]) -> dict:
             f.write(
                 json.dumps(
                     {
-                        "type": "CANDLE_5M",
+                        "type": "CANDLE_15M",
                         "candle_start_ms": c.candle_start_ms,
                         "candle_start_local": c.candle_start_local,
                         "symbol": c.symbol,
