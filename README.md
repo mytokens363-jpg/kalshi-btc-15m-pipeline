@@ -1,6 +1,6 @@
-# Kalshi BTC 15-minute Bot (Kalshi-first)
+# Kalshi BTC 15-minute Up/Down Pipeline
 
-Goal: Build a strategy for Kalshi BTC **15-minute** up/down markets (`kxbtc15m`).
+Goal: Build a strategy + data pipeline for Kalshi BTC **15-minute** up/down markets (`kxbtc15m`).
 
 **Principles**
 - Start with **sim/paper** (no live orders) until data + fills + fees are validated.
@@ -26,10 +26,12 @@ Goal: Build a strategy for Kalshi BTC **15-minute** up/down markets (`kxbtc15m`)
 
 ## Running (Phase 0)
 
+> Note: the repo folder name contains "5min" for historical reasons; this project targets **15-minute** Kalshi markets.
+
 ### External price collector (Binance primary, Coinbase fallback)
 
 ```bash
-cd ~/.openclaw/workspace/kalshi-btc-5min-bot
+cd ~/.openclaw/workspace/kalshi-btc-5min-bot  # repo name is legacy
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
