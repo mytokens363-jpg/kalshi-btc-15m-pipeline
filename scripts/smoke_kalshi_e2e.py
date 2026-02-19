@@ -38,7 +38,7 @@ def _env_required(name: str) -> str:
     return v
 
 
-async def _ws_once(cfg: KalshiWsConfig, key: KalshiKey | None, n: int) -> None:
+async def _ws_once(cfg: KalshiWsConfig, key: KalshiKey | None, n: int, timeout_sec: float = 12.0) -> None:
     got = 0
 
     def emit(obj: dict) -> None:
@@ -54,12 +54,16 @@ async def _ws_once(cfg: KalshiWsConfig, key: KalshiKey | None, n: int) -> None:
         await run_kalshi_ws_marketdata(cfg, key, emit, stop_event=stop)
 
     task = asyncio.create_task(runner())
-    # wait for some messages
-    while got < n:
+
+    t0 = asyncio.get_event_loop().time()
+    while got < n and (asyncio.get_event_loop().time() - t0) < timeout_sec:
         await asyncio.sleep(0.2)
+
     stop.set()
     await asyncio.sleep(0.2)
     task.cancel()
+    if got < n:
+        print(f"WS: timeout after {timeout_sec:.1f}s (got {got}/{n} messages)")
 
 
 def main() -> int:
@@ -68,6 +72,7 @@ def main() -> int:
     ap.add_argument("--series-ticker", default="KXBTC15M")
     ap.add_argument("--market-ticker", default="")
     ap.add_argument("--ws-messages", type=int, default=3)
+    ap.add_argument("--ws-timeout", type=float, default=12.0)
     args = ap.parse_args()
 
     key = KalshiKey(
@@ -92,12 +97,13 @@ def main() -> int:
     ws_host = "demo-api.kalshi.co" if args.env == "demo" else "api.elections.kalshi.com"
     ws_cfg = KalshiWsConfig(
         ws_host=ws_host,
-        channels=("ticker", "trade"),
+        # include orderbook deltas since some markets may have no trade/ticker activity
+        channels=("orderbook_delta", "ticker", "trade"),
         market_tickers=(args.market_ticker,) if args.market_ticker else (),
     )
 
     print("Connecting WS…")
-    asyncio.run(_ws_once(ws_cfg, key, n=args.ws_messages))
+    asyncio.run(_ws_once(ws_cfg, key, n=args.ws_messages, timeout_sec=args.ws_timeout))
 
     print("OK")
     return 0
