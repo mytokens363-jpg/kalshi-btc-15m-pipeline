@@ -82,6 +82,17 @@ def _best_level(levels: list) -> tuple[int, float] | None:
     return int(price), float(size)
 
 
+def _top_n(levels: list, n: int = 3) -> list[tuple[int, float]]:
+    out: list[tuple[int, float]] = []
+    for row in (levels or [])[:n]:
+        try:
+            p, s = row
+            out.append((int(p), float(s)))
+        except Exception:
+            continue
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", choices=["demo", "prod"], default="demo")
@@ -101,8 +112,11 @@ def main() -> int:
     ob = get_json(cfg=cfg, key=key, path=f"/trade-api/v2/markets/{mkt}/orderbook")
     book = ob.get("orderbook") or {}
 
-    yes = _best_level(book.get("yes") or [])
-    no = _best_level(book.get("no") or [])
+    yes_levels = book.get("yes") or []
+    no_levels = book.get("no") or []
+
+    yes = _best_level(yes_levels)
+    no = _best_level(no_levels)
 
     # Alert condition: both sides present.
     if not yes or not no:
@@ -110,6 +124,9 @@ def main() -> int:
 
     yes_px, yes_sz = yes
     no_px, no_sz = no
+
+    yes_top3 = _top_n(yes_levels, 3)
+    no_top3 = _top_n(no_levels, 3)
 
     # Define a simple "spread" in cents between the two best offers.
     # This is heuristic; for binary markets, yes+no near 100 indicates tightness.
@@ -133,11 +150,15 @@ def main() -> int:
         "no_px": no_px,
         "no_sz": no_sz,
         "spread": spread,
+        "yes_top3": yes_top3,
+        "no_top3": no_top3,
     }
     _save_state(st)
 
+    fmt = lambda lv: ",".join([f"{p}x{int(s)}" for p, s in lv])
     print(
-        f"KALSHI DEMO KXBTC15M liquidity: {mkt} | YES {yes_px}x{yes_sz:g} | NO {no_px}x{no_sz:g} | spreadMetric={spread}"
+        f"KALSHI DEMO KXBTC15M liquidity: {mkt} | YES {yes_px}x{yes_sz:g} (top3:{fmt(yes_top3)}) | "
+        f"NO {no_px}x{no_sz:g} (top3:{fmt(no_top3)}) | spreadMetric={spread}"
     )
     return 0
 
