@@ -104,7 +104,18 @@ def save_state(path: Path, st: Dict[str, Any]) -> None:
 
 
 def _get_pos(st: Dict[str, Any], market: str) -> Dict[str, Any]:
-    return st.setdefault("positions", {}).setdefault(market, {"yes": 0, "no": 0})
+    # Track both qty and cost basis so we can compute realized PnL on settlement.
+    # qty: integer contracts
+    # cost_cents: total cents paid for that side
+    return st.setdefault("positions", {}).setdefault(
+        market,
+        {
+            "yes_qty": 0,
+            "yes_cost_cents": 0,
+            "no_qty": 0,
+            "no_cost_cents": 0,
+        },
+    )
 
 
 def _open_orders(st: Dict[str, Any], market: str) -> Dict[str, Any]:
@@ -126,8 +137,8 @@ def _inc_filled_today(st: Dict[str, Any], n: int) -> None:
 def _total_open_contracts(st: Dict[str, Any]) -> int:
     # inventory based cap across markets
     total = 0
-    for m, pos in (st.get("positions") or {}).items():
-        total += abs(int(pos.get("yes", 0))) + abs(int(pos.get("no", 0)))
+    for _m, pos in (st.get("positions") or {}).items():
+        total += abs(int(pos.get("yes_qty", 0))) + abs(int(pos.get("no_qty", 0)))
     return total
 
 
@@ -176,9 +187,14 @@ def simulate_fills_from_size_decrease(
         oo["last_seen_level_size"] = cur_sz
 
     pos = _get_pos(st, market)
-    pos[side] = int(pos.get(side, 0)) + fill
+    if side == "yes":
+        pos["yes_qty"] = int(pos.get("yes_qty", 0)) + fill
+        pos["yes_cost_cents"] = int(pos.get("yes_cost_cents", 0)) + fill * px
+    else:
+        pos["no_qty"] = int(pos.get("no_qty", 0)) + fill
+        pos["no_cost_cents"] = int(pos.get("no_cost_cents", 0)) + fill * px
 
-    # cash: buying YES/NO costs px cents per contract. Selling not implemented in v0.
+    # cash: buying YES/NO costs px cents per contract.
     st["cash_cents"] = int(st.get("cash_cents", 0)) - fill * px
 
     _inc_filled_today(st, fill)
@@ -219,7 +235,7 @@ def ensure_quotes(
             continue
 
         best_px, best_sz = best
-        my_pos = int(pos.get(side, 0))
+        my_pos = int(pos.get(f"{side}_qty", 0))
         if my_pos >= limits.max_contracts_per_side_per_market:
             oo.pop(side, None)
             continue
@@ -243,6 +259,129 @@ def ensure_quotes(
         }
 
 
+def _migrate_positions_from_legacy(st: Dict[str, Any]) -> None:
+    # Legacy state used positions[market] = {yes:int, no:int} without cost.
+    # We can reconstruct qty+cost from the fills ledger if present.
+    pos = st.get("positions")
+    if not isinstance(pos, dict) or not pos:
+        return
+
+    # If already migrated, bail.
+    any_new = False
+    for _m, p in pos.items():
+        if isinstance(p, dict) and ("yes_qty" in p or "no_qty" in p):
+            any_new = True
+            break
+    if any_new:
+        return
+
+    # Rebuild from fills
+    rebuilt: Dict[str, Dict[str, int]] = {}
+    for f in st.get("fills", []) or []:
+        try:
+            m = str(f["market"])
+            side = str(f["side"])
+            px = int(f["px"])
+            qty = int(f["qty"])
+        except Exception:
+            continue
+        r = rebuilt.setdefault(m, {"yes_qty": 0, "yes_cost_cents": 0, "no_qty": 0, "no_cost_cents": 0})
+        if side == "yes":
+            r["yes_qty"] += qty
+            r["yes_cost_cents"] += qty * px
+        elif side == "no":
+            r["no_qty"] += qty
+            r["no_cost_cents"] += qty * px
+
+    st["positions"] = rebuilt
+
+
+def settle_finalized_markets(cfg: KalshiRestConfig, key: KalshiKey, st: Dict[str, Any]) -> int:
+    """Settle any held markets that are finalized/resolved.
+
+    Uses /markets/{ticker}.market.result ("yes"|"no"|"") when status==finalized.
+    Payout: winning side pays 100 cents per contract (notional $1).
+    """
+    settled = 0
+    positions = st.get("positions") or {}
+    for mkt, pos in list(positions.items()):
+        yq = int(pos.get("yes_qty", 0))
+        nq = int(pos.get("no_qty", 0))
+        if yq == 0 and nq == 0:
+            continue
+
+        data = get_json(cfg=cfg, key=key, path=f"/trade-api/v2/markets/{mkt}")
+        market = data.get("market") or {}
+        if (market.get("status") or "").lower() != "finalized":
+            continue
+
+        result = (market.get("result") or "").lower()
+        payout_cents = 0
+        if result == "yes":
+            payout_cents = 100 * yq
+        elif result == "no":
+            payout_cents = 100 * nq
+        else:
+            # unknown; skip
+            continue
+
+        cost_cents = int(pos.get("yes_cost_cents", 0)) + int(pos.get("no_cost_cents", 0))
+        st["cash_cents"] = int(st.get("cash_cents", 0)) + payout_cents
+        st.setdefault("realized", []).append({
+            "ts": int(time.time()),
+            "market": mkt,
+            "result": result,
+            "payout_cents": payout_cents,
+            "cost_cents": cost_cents,
+            "pnl_cents": payout_cents - cost_cents,
+            "yes_qty": yq,
+            "no_qty": nq,
+        })
+
+        # clear positions + orders for that market
+        positions.pop(mkt, None)
+        (st.get("open_orders") or {}).pop(mkt, None)
+        settled += 1
+
+    st["positions"] = positions
+    return settled
+
+
+def mark_to_market(cfg: KalshiRestConfig, key: KalshiKey, st: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute MTM using best bid levels from REST orderbook."""
+    out = {"equity_cents": int(st.get("cash_cents", 0)), "unrealized_cents": 0, "lines": []}
+    for mkt, pos in (st.get("positions") or {}).items():
+        yq = int(pos.get("yes_qty", 0))
+        nq = int(pos.get("no_qty", 0))
+        if yq == 0 and nq == 0:
+            continue
+
+        ob = fetch_orderbook(cfg, key, mkt)
+        book = ob.get("orderbook") or {}
+        yes_bid = _best_level(book.get("yes") or [])
+        no_bid = _best_level(book.get("no") or [])
+        y_bid_px = int(yes_bid[0]) if yes_bid else 0
+        n_bid_px = int(no_bid[0]) if no_bid else 0
+
+        mtm_cents = yq * y_bid_px + nq * n_bid_px
+        cost_cents = int(pos.get("yes_cost_cents", 0)) + int(pos.get("no_cost_cents", 0))
+        unreal = mtm_cents - cost_cents
+
+        out["equity_cents"] += mtm_cents
+        out["unrealized_cents"] += unreal
+        out["lines"].append({
+            "market": mkt,
+            "yes_qty": yq,
+            "no_qty": nq,
+            "yes_bid": y_bid_px,
+            "no_bid": n_bid_px,
+            "mtm_cents": mtm_cents,
+            "unrealized_cents": unreal,
+        })
+
+    return out
+
+
 def run_once(
     *,
     env: str,
@@ -255,8 +394,14 @@ def run_once(
     st = load_state(state_path)
     st.setdefault("cash_cents", 25000)  # default $250
 
+    _migrate_positions_from_legacy(st)
+
+    # A) settlement for finalized markets
+    settled = settle_finalized_markets(cfg, key, st)
+
     mkt = pick_active_market(cfg, key)
     if not mkt:
+        save_state(state_path, st)
         return "NO_MARKET"
 
     ob = fetch_orderbook(cfg, key, mkt)
@@ -272,7 +417,6 @@ def run_once(
     best_yes = _best_level(yes_levels)
     best_no = _best_level(no_levels)
     if not best_yes or not best_no:
-        # clear quotes in one-sided books
         _open_orders(st, mkt).pop("yes", None)
         _open_orders(st, mkt).pop("no", None)
         save_state(state_path, st)
@@ -280,12 +424,19 @@ def run_once(
 
     ensure_quotes(st=st, market=mkt, best_yes=best_yes, best_no=best_no, limits=limits, qcfg=qcfg)
 
+    # B) MTM
+    mtm = mark_to_market(cfg, key, st)
+
     save_state(state_path, st)
 
     cash = int(st.get("cash_cents", 0)) / 100.0
+    eq = int(mtm["equity_cents"]) / 100.0
+    unrl = int(mtm["unrealized_cents"]) / 100.0
     pos = _get_pos(st, mkt)
     oo = _open_orders(st, mkt)
+
     return (
-        f"PAPER_MM {mkt} cash=${cash:.2f} pos_yes={pos.get('yes',0)} pos_no={pos.get('no',0)} "
-        f"oo_yes={oo.get('yes',{})} oo_no={oo.get('no',{})} fills(+){fills_yes+fills_no}"
+        f"PAPER_MM {mkt} cash=${cash:.2f} equity=${eq:.2f} unrl=${unrl:.2f} "
+        f"pos_yes={pos.get('yes_qty',0)} pos_no={pos.get('no_qty',0)} fills(+){fills_yes+fills_no} settled(+){settled} "
+        f"oo_yes={oo.get('yes',{})} oo_no={oo.get('no',{})}"
     )
