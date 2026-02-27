@@ -12,6 +12,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import time
+
+
+def _day_key_utc(ts: int) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
 def main() -> int:
@@ -32,8 +37,11 @@ def main() -> int:
 
     daily = st.get("daily", {}) or {}
     day_keys = sorted(daily.keys())
-    today_key = day_keys[-1] if day_keys else None
-    filled_today = int(daily.get(today_key, {}).get("filled", 0)) if today_key else 0
+    # Prefer state.daily latest key; fall back to now.
+    today_key = day_keys[-1] if day_keys else _day_key_utc(int(time.time()))
+
+    # Fills today: prefer daily counter if present, otherwise derive from fills ledger.
+    filled_today = int(daily.get(today_key, {}).get("filled", 0))
 
     # Optional richer daily metrics (written by paper_mm)
     d_today = daily.get(today_key, {}) if today_key else {}
@@ -48,8 +56,43 @@ def main() -> int:
     realized = st.get("realized", []) or []
     realized_pnl_cents = sum(int(x.get("pnl_cents", 0)) for x in realized)
 
+    # Today realized PnL (by realized.ts)
+    realized_today = [r for r in realized if _day_key_utc(int(r.get("ts", 0) or 0)) == today_key]
+    realized_today_pnl_cents = sum(int(r.get("pnl_cents", 0)) for r in realized_today)
+
+    fills = st.get("fills", []) or []
+    fills_today = [f for f in fills if _day_key_utc(int(f.get("ts", 0) or 0)) == today_key]
+    filled_today_derived = sum(int(f.get("qty", 0) or 0) for f in fills_today)
+    if filled_today <= 0 and filled_today_derived > 0:
+        filled_today = filled_today_derived
+
+    avg_pnl_per_fill = None
+    if filled_today > 0:
+        avg_pnl_per_fill = realized_today_pnl_cents / float(filled_today)
+
     positions = st.get("positions", {}) or {}
-    open_markets = len(positions)
+
+    # Count only markets where we actually hold inventory
+    nonzero_positions = {
+        mkt: pos
+        for mkt, pos in positions.items()
+        if abs(int(pos.get("yes_qty", 0))) + abs(int(pos.get("no_qty", 0))) > 0
+    }
+    open_markets = len(nonzero_positions)
+
+    open_contracts_total = 0
+    open_cost_cents_total = 0
+    per_market_cost = []
+    for mkt, pos in nonzero_positions.items():
+        yq = abs(int(pos.get("yes_qty", 0)))
+        nq = abs(int(pos.get("no_qty", 0)))
+        cost = int(pos.get("yes_cost_cents", 0)) + int(pos.get("no_cost_cents", 0))
+        open_contracts_total += yq + nq
+        open_cost_cents_total += cost
+        per_market_cost.append((cost, mkt, yq, nq))
+    per_market_cost.sort(reverse=True)
+
+    gross_notional_est = open_contracts_total * 1.0  # ~$1 max payout/contract
 
     print(f"Kalshi PAPER-MM summary")
     print(f"- cash: ${cash:.2f}")
@@ -67,13 +110,24 @@ def main() -> int:
     if today_key and nonzero_pos_mkts is not None:
         print(f"- markets w/ inventory: {int(nonzero_pos_mkts)}")
     print(f"- realized PnL (all-time): ${realized_pnl_cents/100.0:.2f} (n={len(realized)})")
-    if today_key:
-        print(f"- filled today ({today_key} UTC): {filled_today}")
+
+    print(f"- filled today ({today_key} UTC): {filled_today}")
+    if avg_pnl_per_fill is None:
+        print(f"- avg realized P/L per fill today: n/a")
+    else:
+        print(f"- avg realized P/L per fill today: ${avg_pnl_per_fill/100.0:.4f}")
+
     print(f"- open markets: {open_markets}")
+    print(f"- open contracts (gross): {open_contracts_total} (gross notional ~${gross_notional_est:,.0f})")
+    print(f"- open cost basis (gross): ${open_cost_cents_total/100.0:.2f}")
 
     if open_markets:
-        print("- positions (by market):")
-        for mkt, pos in list(positions.items())[:12]:
+        print("- biggest open positions by cost (top 5):")
+        for cost, mkt, yq, nq in per_market_cost[:5]:
+            print(f"  • {mkt}: YES {yq} | NO {nq} | cost ${cost/100.0:.2f}")
+
+        print("- positions (by market, first 12):")
+        for mkt, pos in list(nonzero_positions.items())[:12]:
             yq = int(pos.get("yes_qty", 0))
             nq = int(pos.get("no_qty", 0))
             yc = int(pos.get("yes_cost_cents", 0))
@@ -90,7 +144,6 @@ def main() -> int:
                 f"(payout=${int(r.get('payout_cents',0))/100:.2f} cost=${int(r.get('cost_cents',0))/100:.2f})"
             )
 
-    fills = st.get("fills", []) or []
     if fills:
         print("- last fills:")
         for f in fills[-args.last:]:
