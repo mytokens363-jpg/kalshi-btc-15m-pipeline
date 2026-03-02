@@ -171,12 +171,12 @@ def place_order(
     }
 
     from .kalshi_auth import rest_auth_headers
-    headers = rest_auth_headers(key, "POST", "/trade-api/v2/orders")
+    headers = rest_auth_headers(key, "POST", "/trade-api/v2/portfolio/orders")
     headers["Content-Type"] = "application/json"
 
     payload = json.dumps(body).encode()
     req = urllib.request.Request(
-        f"{cfg.base_url}/trade-api/v2/orders",  # cfg.base_url uses env='prod'
+        f"{cfg.base_url}/trade-api/v2/portfolio/orders",  # cfg.base_url uses env='prod'
         data=payload,
         headers=headers,
         method="POST",
@@ -197,7 +197,7 @@ def place_order(
 
 def cancel_order(*, cfg: KalshiRestConfig, key: KalshiKey, order_id: str) -> bool:
     from .kalshi_auth import rest_auth_headers
-    path = f"/trade-api/v2/orders/{order_id}"
+    path = f"/trade-api/v2/portfolio/orders/{order_id}"
     headers = rest_auth_headers(key, "DELETE", path)
     req = urllib.request.Request(
         f"{cfg.base_url}{path}",
@@ -214,7 +214,7 @@ def cancel_order(*, cfg: KalshiRestConfig, key: KalshiKey, order_id: str) -> boo
 
 def get_order_status(*, cfg: KalshiRestConfig, key: KalshiKey, order_id: str) -> Optional[Dict[str, Any]]:
     from .kalshi_auth import rest_auth_headers
-    path = f"/trade-api/v2/orders/{order_id}"
+    path = f"/trade-api/v2/portfolio/orders/{order_id}"
     headers = rest_auth_headers(key, "GET", path)
     req = urllib.request.Request(f"{cfg.base_url}{path}", headers=headers)
     try:
