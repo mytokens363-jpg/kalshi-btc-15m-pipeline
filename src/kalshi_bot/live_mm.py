@@ -26,6 +26,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from .kalshi_auth import KalshiKey
 from .collectors.kalshi_rest import KalshiRestConfig, get_json
+import urllib.parse
+
 from .paper_mm import (
     SERIES,
     QuoteConfig,
@@ -37,6 +39,57 @@ from .paper_mm import (
     pick_active_market,
     save_state,
 )
+
+# ── BTC price feed ───────────────────────────────────────────────────────────
+
+def get_btc_mid() -> Optional[float]:
+    """Fetch BTC/USDT mid price from Binance REST (no auth needed). Returns None on error."""
+    try:
+        url = "https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=BTCUSDT"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            d = json.loads(r.read())
+            bid = float(d["bidPrice"])
+            ask = float(d["askPrice"])
+            return (bid + ask) / 2
+    except Exception:
+        return None
+
+
+def btc_directional_bias(state_path: Path) -> Optional[str]:
+    """Compare current BTC price to price 15min ago. Returns 'up', 'down', or None."""
+    mid = get_btc_mid()
+    if mid is None:
+        return None
+
+    # Load/update price history
+    price_log = state_path.parent / "btc_price_log.json"
+    history: list = []
+    if price_log.exists():
+        try:
+            history = json.loads(price_log.read_text())
+        except Exception:
+            history = []
+
+    now_ts = int(time.time())
+    history.append({"ts": now_ts, "mid": mid})
+    # Keep last 20 minutes of data
+    history = [h for h in history if now_ts - h["ts"] < 1200]
+    price_log.write_text(json.dumps(history))
+
+    # Find price ~15 min ago
+    target_ts = now_ts - 900
+    old_entry = min(history, key=lambda h: abs(h["ts"] - target_ts), default=None)
+    if not old_entry or abs(old_entry["ts"] - target_ts) > 180:
+        return None  # Not enough history yet
+
+    pct_change = (mid - old_entry["mid"]) / old_entry["mid"] * 100
+    if pct_change > 0.15:
+        return "up"
+    elif pct_change < -0.15:
+        return "down"
+    return None  # flat
+
 
 # ── Hard risk constants (cannot be changed without code edit) ─────────────────
 
@@ -202,6 +255,10 @@ def run_once(
         save_state(state_path, st)
         return {**summary, "halted": True, "reason": "daily_loss_limit"}
 
+    # ── BTC directional bias ─────────────────────────────────────────────────
+    bias = btc_directional_bias(state_path)
+    summary["btc_bias"] = bias
+
     # ── Find active market ────────────────────────────────────────────────────
     market = pick_active_market(cfg, key)
     if not market:
@@ -254,7 +311,16 @@ def run_once(
     no_levels = ob_data.get("no") or []
 
     # ── Quote both sides ──────────────────────────────────────────────────────
+    # Skip the unfavorable side when we have a strong directional signal
+    sides_to_quote = []
     for side, levels in (("yes", yes_levels), ("no", no_levels)):
+        if bias == "up" and side == "no":
+            continue   # BTC trending up → skip NO quotes
+        if bias == "down" and side == "yes":
+            continue   # BTC trending down → skip YES quotes
+        sides_to_quote.append((side, levels))
+
+    for side, levels in sides_to_quote:
         best = _best_level(levels)
         if not best:
             continue
