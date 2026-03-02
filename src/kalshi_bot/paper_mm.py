@@ -52,7 +52,7 @@ def _now_day_key() -> str:
     return time.strftime("%Y-%m-%d", time.gmtime())
 
 
-def pick_active_market(cfg: KalshiRestConfig, key: KalshiKey) -> Optional[str]:
+def pick_active_market(cfg: KalshiRestConfig, key: KalshiKey, min_minutes_to_close: int = 10) -> Optional[str]:
     data = get_json(
         cfg=cfg,
         key=key,
@@ -60,12 +60,23 @@ def pick_active_market(cfg: KalshiRestConfig, key: KalshiKey) -> Optional[str]:
         params={"limit": 50, "series_ticker": SERIES, "status": "open"},
     )
     markets = data.get("markets") or []
+    now = time.time()
     for m in markets:
-        if (m.get("status") or "").lower() == "active":
-            return m.get("ticker") or m.get("market_ticker")
-    if markets:
-        m0 = markets[0]
-        return m0.get("ticker") or m0.get("market_ticker")
+        if (m.get("status") or "").lower() != "active":
+            continue
+        # Skip markets closing within min_minutes_to_close
+        close_time = m.get("close_time") or ""
+        if close_time:
+            try:
+                import datetime
+                ct = datetime.datetime.fromisoformat(close_time.replace("Z", "+00:00"))
+                secs_left = ct.timestamp() - now
+                if secs_left < min_minutes_to_close * 60:
+                    print(f"[pick_market] Skipping {m.get('ticker')} — only {secs_left/60:.1f} min to close")
+                    continue
+            except Exception:
+                pass
+        return m.get("ticker") or m.get("market_ticker")
     return None
 
 
